@@ -1,0 +1,125 @@
+---
+title: "Practical Machine Learning - Final Project"
+author: "Marcelo Bohrer"
+output: html_document
+---
+
+#Introduction
+
+This project analyzes the Weight Lifting Exercise Dataset.The purpose is to predict the way in which people completed an exercise based on data from accelorometer devices. Subjects were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The goal is to develop a model that correctly classifies the execution of the exercise.
+
+
+
+#The Data
+
+The training data are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here (not used in this part of the project):
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for  come from this source:
+http://groupware.les.inf.puc-rio.br/har
+
+Our training set has 19622 samples and 160 variables. It's obviously out of the scope of this project to provide exploratory analysis on such a large data set. The variable we want to predict is "classe".
+
+##Loading and Cleaning the Data
+The first step in building our model is to load the data and get it properly formated for the analysis. The required libraries are loaded as well.
+
+```{r, cache=TRUE}
+library(caret)
+training <- read.csv("pml-training.csv", na.strings = c("","NA", "#DIV/0!"))
+sum(is.na(training))
+```
+To avoid problems with missing variables we simply omit them from the data set:
+```{r, cache=TRUE}
+na_func <- apply(training, 2, function(x){sum(is.na(x))})
+training <- training[which(na_func==0)]
+training$user_name <- NULL
+training$X <- NULL
+training$raw_timestamp_part_1 <- NULL
+training$raw_timestamp_part_2 <- NULL
+training$cvtd_timestamp <- NULL
+nsv <- nearZeroVar(training, saveMetrics = T)
+training[which(nsv$nzv == TRUE)] <- NULL
+ 
+```
+The data set is now greatly reduced, it is left with 54 variables.
+
+##Data Partition
+The data can now be partitioned into a training set and a validation set, against which the model can be tested. 
+```{r, cache=TRUE}
+set.seed(7169)
+inTrain <- createDataPartition(y = training$classe,p=0.85, list = F )
+trainset <- training[inTrain,]
+validation <- training[-inTrain,]
+```
+
+#The Model
+
+Different models can now be created and tested. We start by setting the cross validation parameter:
+```{r, cache=TRUE}
+ctrl <- trainControl(method = "cv", number = 10)
+```
+This generates a 10-fold cross validation.
+
+Note that given the size of the data set, it is unlikely that a full fledged caret random forest model can be fitted in reasonable time on a personal computer. Two "simple" choices to analyze are Classification and Regression Trees (rpart) and Linear Discriminant Analysis (LDA). We first try these two models.
+
+##Preliminary Models
+
+We start with the rpart model:
+```{r, cache=TRUE}
+set.seed(7270)
+ModFit_rpart <- train(classe~., method = "rpart",trControl = ctrl ,data = trainset)
+ModFit_rpart
+```
+Now predictions for the validation set can be created.
+```{r, cache=TRUE}
+pred_rpart <- predict(ModFit_rpart, validation)
+confusionMatrix(pred_rpart, validation$classe)
+```
+We can now proceed to the LDA model:
+```{r, cache=TRUE}
+set.seed(7371)
+ModFit_lda <- train(classe~., method = "lda", trControl = ctrl, data = trainset)
+ModFit_lda
+```
+As before we can make predictons on the validation set:
+```{r, cache=TRUE}
+pred_lda <- predict(ModFit_lda, validation)
+confusionMatrix(pred_lda, validation$classe)
+```
+
+Comparing the two models we can see that the LDA provides much better accuracy, both in the training set and the validation set. But accuracy is still low for a machine learning algorithm. 
+
+##Random Forest Model
+We start by fitting a forest using the random forest model directly, choosing the number of trees explicitly.This model will be used to determine the relative importance of variables.
+
+```{r, cache=TRUE}
+library(randomForest)
+set.seed(7472)
+ModFit_rf_prem <- randomForest(classe~., data = trainset, trControl = ctrl, importance = T, ntree=150)
+rownames(varImp(ModFit_rf_prem)[1:10,])
+```
+The idea is to fit a random forest model using only these 10 predictors. For notational simplicity we define a formula to be used in the train function.
+
+```{r, cache=TRUE}
+form <- classe~ num_window+roll_belt+pitch_belt +yaw_belt+total_accel_belt+gyros_belt_x+gyros_belt_y+gyros_belt_z+accel_belt_x+accel_belt_y
+set.seed(7573)
+ModFit_rf <- train(form, method="rf", trControl = ctrl, data = trainset )
+ModFit_rf
+```
+Again we create predictions using this model:
+```{r, cache=TRUE}
+pred_rf <- predict(ModFit_rf, validation)
+confusionMatrix(pred_rf, validation$classe)
+```
+As we can see this model greatly increases the accuracy relative to our two previous models.
+
+##Errors 
+
+We can now calculate the in and out of sample errors for the random forest model. The in sample error is just the complement of the accuracy, which in our case is 0.06%. For the out of sample error we do the following calculation:
+```{r, cache=TRUE}
+(1-sum(pred_rf == validation$classe)/length(pred_rf))*100
+```
+which translates to approximately 0.07% out of sample error rate.
